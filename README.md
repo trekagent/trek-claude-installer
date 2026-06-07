@@ -1,4 +1,4 @@
-# @trek/claude
+# @trekagent/claude
 
 One-command installer for [Trek](https://trekagent.io). It installs the **Trek Claude Code
 plugin** (skill + presence hooks + remote MCP server) from the Trek marketplace and wires your
@@ -9,13 +9,13 @@ you restart Claude Code.
 
 ```bash
 # Install into the current project (writes ./.claude/settings.local.json)
-npx @trek/claude init
+npx @trekagent/claude init
 
 # User-level (writes ~/.claude/settings.local.json)
-npx @trek/claude init --user
+npx @trekagent/claude init --user
 
 # Reverse it
-npx @trek/claude init --uninstall
+npx @trekagent/claude init --uninstall
 ```
 
 ### Flags
@@ -27,7 +27,7 @@ npx @trek/claude init --uninstall
 | `--token <trk_...>` | `$TREK_TOKEN`, else prompt | Trek API token. |
 | `--api-url <url>` | `https://api.trekagent.io` | Trek API base URL. |
 | `--project-id <uuid>` | `$TREK_PROJECT_ID` | Bind a default Trek project. |
-| `--marketplace <owner>/<repo>` | `$TREK_MARKETPLACE` | GitHub repo hosting the plugin marketplace. |
+| `--marketplace <owner>/<repo>` | `trekagent/trek-claude-plugin` or `$TREK_MARKETPLACE` | GitHub repo hosting the plugin marketplace. |
 | `--uninstall` | | Remove the plugin + Trek env for the chosen scope. |
 
 If no token is provided via flag or env, `init` prompts for one (TTY) and points you at the
@@ -35,7 +35,7 @@ cockpit **Settings → API tokens** page to mint one.
 
 ## What `init` does
 
-1. `claude plugin marketplace add <owner>/trek-claude-plugin`
+1. `claude plugin marketplace add trekagent/trek-claude-plugin`
 2. `claude plugin install trek@trek`
 3. Writes the token into `.claude/settings.local.json` (gitignored), deep-merged:
    ```jsonc
@@ -46,9 +46,8 @@ That one `env` block powers **both** the plugin's MCP auth (`Bearer ${TREK_TOKEN
 presence hooks (which read `TREK_TOKEN` / `TREK_API_URL`). The skill, hooks, and MCP server
 themselves all live in the plugin — this installer just stands it up and authenticates it.
 
-> The plugin marketplace lives at a GitHub repo. Until it's published under your org, pass
-> `--marketplace <owner>/trek-claude-plugin` or set `TREK_MARKETPLACE`; the built-in default is a
-> `YOUR_ORG/...` placeholder.
+> The plugin marketplace lives at `trekagent/trek-claude-plugin`. Override it with
+> `--marketplace <owner>/<repo>` or `TREK_MARKETPLACE` when testing a fork.
 
 ## Idempotency
 

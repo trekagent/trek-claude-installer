@@ -1,14 +1,14 @@
 #!/usr/bin/env node
-// @trek/claude — install Trek into Claude Code in one command.
+// @trekagent/claude — install Trek into Claude Code in one command.
 //
 // Installs the Trek plugin (skill + presence hooks + remote MCP server) from the Trek
 // marketplace, then wires your API token so the MCP server and hooks authenticate.
 //
-//   npx @trek/claude init                       # project scope (writes ./.claude/settings.local.json)
-//   npx @trek/claude init --user                # user scope  (writes ~/.claude/settings.local.json)
-//   npx @trek/claude init --token trk_... --api-url https://api.trekagent.io
-//   npx @trek/claude init --marketplace owner/repo   # override the marketplace source
-//   npx @trek/claude init --uninstall
+//   npx @trekagent/claude init                       # project scope (writes ./.claude/settings.local.json)
+//   npx @trekagent/claude init --user                # user scope  (writes ~/.claude/settings.local.json)
+//   npx @trekagent/claude init --token trk_... --api-url https://api.trekagent.io
+//   npx @trekagent/claude init --marketplace owner/repo   # override the marketplace source
+//   npx @trekagent/claude init --uninstall
 //
 // Pure Node, no deps. Idempotent: re-running never duplicates or clobbers your other settings.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -22,9 +22,8 @@ const DEFAULT_API_URL = 'https://api.trekagent.io';
 const COCKPIT_SETTINGS_URL = 'https://console.trekagent.io/settings';
 const PLUGIN = 'trek';
 const MARKETPLACE = 'trek'; // the `name` in the marketplace's marketplace.json
-// GitHub org/repo hosting the plugin marketplace. TODO: set this to your org once the
-// repo exists (or pass --marketplace owner/repo / set TREK_MARKETPLACE).
-const DEFAULT_MARKETPLACE_REPO = process.env.TREK_MARKETPLACE || 'YOUR_ORG/trek-claude-plugin';
+// GitHub org/repo hosting the plugin marketplace.
+const DEFAULT_MARKETPLACE_REPO = process.env.TREK_MARKETPLACE || 'trekagent/trek-claude-plugin';
 
 // --- console helpers -------------------------------------------------------
 const c = {
@@ -132,10 +131,6 @@ function ensureGitignore(dir, entries) {
 
 // --- plugin install via marketplace ----------------------------------------
 function installPlugin(bin, marketplaceRepo) {
-  if (marketplaceRepo.includes('YOUR_ORG')) {
-    warn(`marketplace repo not set — using placeholder "${marketplaceRepo}".`);
-    log(`       Pass ${c.cyan('--marketplace <owner>/trek-claude-plugin')} or set ${c.cyan('TREK_MARKETPLACE')}.`);
-  }
   // Add marketplace (tolerate "already added").
   let r = claude(bin, ['plugin', 'marketplace', 'add', marketplaceRepo]);
   if (r.status === 0) ok(`marketplace added: ${marketplaceRepo}`);
@@ -163,7 +158,7 @@ async function init(flags) {
   const bin = whichClaude();
   if (!bin) {
     warn('`claude` CLI not found. Install Claude Code first: https://docs.claude.com/claude-code');
-    log('Then re-run `npx @trek/claude init`. Or install the plugin manually:');
+    log('Then re-run `npx @trekagent/claude init`. Or install the plugin manually:');
     log(`       claude plugin marketplace add ${marketplaceRepo}`);
     log(`       claude plugin install ${PLUGIN}@${MARKETPLACE}`);
   } else {
@@ -208,10 +203,10 @@ async function uninstall(flags) {
 }
 
 // --- help / main -----------------------------------------------------------
-const HELP = `${c.bold('@trek/claude')} — install Trek into Claude Code.
+const HELP = `${c.bold('@trekagent/claude')} — install Trek into Claude Code.
 
 ${c.bold('Usage')}
-  npx @trek/claude init [options]
+  npx @trekagent/claude init [options]
 
 ${c.bold('Options')}
   --project              Project scope: write ./.claude/settings.local.json (default)
@@ -224,7 +219,7 @@ ${c.bold('Options')}
   -h, --help             Show this help
 
 ${c.bold('What init does')}
-  1. claude plugin marketplace add <owner>/trek-claude-plugin
+  1. claude plugin marketplace add trekagent/trek-claude-plugin
   2. claude plugin install ${PLUGIN}@${MARKETPLACE}
   3. writes TREK_TOKEN / TREK_API_URL into .claude/settings.local.json (gitignored)
 

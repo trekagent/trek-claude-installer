@@ -1,5 +1,5 @@
 {
-  "name": "@trek/claude",
+  "name": "@trekagent/claude",
   "version": "0.1.0",
   "description": "One-command installer for Trek: installs the Trek Claude Code plugin (skill + hooks + MCP) from the Trek marketplace and wires your API token.",
   "private": false,
@@ -11,6 +11,14 @@
     "bin",
     "README.md"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/trekagent/trek-claude-installer.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
   "engines": {
     "node": ">=20"
   },
