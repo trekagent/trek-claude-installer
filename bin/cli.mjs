@@ -4,22 +4,31 @@
 // Installs the Trek plugin (skill + presence hooks + remote MCP server) from the Trek
 // marketplace, then wires your API token so the MCP server and hooks authenticate.
 //
+// By default, if no token is already available, init opens your browser to sign in and
+// the token is created + delivered back automatically over a localhost loopback listener.
+//
 //   npx @trekagent/claude init                       # project scope (writes ./.claude/settings.local.json)
 //   npx @trekagent/claude init --user                # user scope  (writes ~/.claude/settings.local.json)
 //   npx @trekagent/claude init --token trk_... --api-url https://api.trekagent.io
+//   npx @trekagent/claude init --login               # force a fresh browser login
+//   npx @trekagent/claude init --no-browser          # skip browser, paste a token manually
 //   npx @trekagent/claude init --marketplace owner/repo   # override the marketplace source
 //   npx @trekagent/claude init --uninstall
 //
 // Pure Node, no deps. Idempotent: re-running never duplicates or clobbers your other settings.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, hostname } from 'node:os';
 import { createInterface } from 'node:readline';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
+import { createServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
 
 // --- defaults --------------------------------------------------------------
 const DEFAULT_API_URL = 'https://api.trekagent.io';
-const COCKPIT_SETTINGS_URL = 'https://console.trekagent.io/settings';
+const DEFAULT_COCKPIT_URL = 'https://console.trekagent.io';
+const COCKPIT_SETTINGS_URL = `${DEFAULT_COCKPIT_URL}/settings`;
+const LOGIN_TIMEOUT_MS = 180000; // 3 min to authorize in the browser
 const PLUGIN = 'trek';
 const MARKETPLACE = 'trek'; // the `name` in the marketplace's marketplace.json
 // GitHub org/repo hosting the plugin marketplace.
@@ -42,7 +51,7 @@ const warn = (s) => log(`  ${c.yellow('!!')}  ${s}`);
 // --- arg parsing -----------------------------------------------------------
 function parseArgs(argv) {
   const args = { _: [], flags: {} };
-  const bools = new Set(['user', 'project', 'uninstall', 'help', 'force']);
+  const bools = new Set(['user', 'project', 'uninstall', 'help', 'force', 'no-browser', 'login']);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '-h') { args.flags.help = true; continue; }
@@ -86,9 +95,147 @@ function claude(bin, args) {
 }
 
 // --- token -----------------------------------------------------------------
-async function resolveToken(flags) {
-  if (typeof flags.token === 'string' && flags.token) return flags.token;
-  if (process.env.TREK_TOKEN) { skip('using TREK_TOKEN from environment'); return process.env.TREK_TOKEN; }
+const looksLikeToken = (t) => typeof t === 'string' && t.startsWith('trk_');
+
+// Derive the cockpit base URL: explicit --cockpit-url wins, otherwise fall back
+// to the default cockpit (used both for the default api base and any custom one).
+function cockpitBase(flags) {
+  if (typeof flags['cockpit-url'] === 'string' && flags['cockpit-url']) {
+    return flags['cockpit-url'].replace(/\/+$/, '');
+  }
+  return DEFAULT_COCKPIT_URL;
+}
+
+// Reuse a token already wired into project or user settings.local.json.
+function detectExistingToken() {
+  const candidates = [
+    join(CWD, '.claude', 'settings.local.json'),
+    join(homedir(), '.claude', 'settings.local.json'),
+  ];
+  for (const path of candidates) {
+    const cur = readJson(path);
+    const tok = cur && cur.env && cur.env.TREK_TOKEN;
+    if (looksLikeToken(tok)) return { token: tok, path };
+  }
+  return null;
+}
+
+// Open a URL in the user's default browser, cross-platform. Tolerates failure.
+function openBrowser(url) {
+  try {
+    let cmd, args;
+    if (process.platform === 'darwin') { cmd = 'open'; args = [url]; }
+    else if (process.platform === 'win32') { cmd = 'cmd'; args = ['/c', 'start', '', url]; }
+    else { cmd = 'xdg-open'; args = [url]; }
+    const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
+    child.on('error', () => {});
+    child.unref();
+    return true;
+  } catch { return false; }
+}
+
+const SUCCESS_HTML = `<!doctype html><html><head><meta charset="utf-8"><title>Trek CLI connected</title>
+<style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#0b0d10;color:#e8eaed;
+display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
+.card{text-align:center;max-width:30rem;padding:2rem}h1{font-size:1.4rem}p{color:#9aa0a6}</style></head>
+<body><div class="card"><h1>Trek CLI connected ✓</h1>
+<p>You can close this tab and return to your terminal.</p></div></body></html>`;
+const errorHtml = (msg) => `<!doctype html><html><head><meta charset="utf-8"><title>Trek CLI</title>
+<style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#0b0d10;color:#e8eaed;
+display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
+.card{text-align:center;max-width:30rem;padding:2rem}h1{font-size:1.4rem}p{color:#f28b82}</style></head>
+<body><div class="card"><h1>Trek CLI</h1><p>${String(msg).replace(/[<>&]/g, '')}</p></div></body></html>`;
+
+// Loopback browser-login flow. Resolves with a trk_ token, or null if it could
+// not complete (timeout / browser failure / user error) so the caller can fall back.
+function browserLogin(flags) {
+  return new Promise((resolve) => {
+    const expectedState = randomUUID();
+    let settled = false;
+    let timer = null;
+
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      try { server.close(); } catch {}
+      resolve(result);
+    };
+
+    const server = createServer((req, res) => {
+      let url;
+      try { url = new URL(req.url, 'http://127.0.0.1'); }
+      catch { res.writeHead(204).end(); return; }
+
+      if (url.pathname !== '/callback') {
+        // favicon.ico and any other path: ignore.
+        res.writeHead(204).end();
+        return;
+      }
+
+      const token = url.searchParams.get('token');
+      const state = url.searchParams.get('state');
+      const error = url.searchParams.get('error');
+
+      // A mismatched state must NOT resolve — keep waiting.
+      if (state !== expectedState) {
+        res.writeHead(400, { 'content-type': 'text/html; charset=utf-8' });
+        res.end(errorHtml('Invalid state — this login request did not originate from this terminal.'));
+        return;
+      }
+
+      if (error) {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        res.end(errorHtml(`Login failed: ${error}`));
+        warn(`browser login failed: ${error}`);
+        finish(null);
+        return;
+      }
+
+      if (looksLikeToken(token)) {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        res.end(SUCCESS_HTML);
+        finish(token);
+        return;
+      }
+
+      // Hit /callback with no usable token — show an error but keep waiting.
+      res.writeHead(400, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(errorHtml('No token received.'));
+    });
+
+    server.on('error', (err) => {
+      warn(`could not start local login listener: ${err.message}`);
+      finish(null);
+    });
+
+    server.listen(0, '127.0.0.1', () => {
+      const port = server.address().port;
+      const label = `Claude Code @ ${hostname()}`;
+      const base = cockpitBase(flags);
+      const authUrl = `${base}/cli-auth?port=${port}&state=${encodeURIComponent(expectedState)}&name=${encodeURIComponent(label)}`;
+
+      log();
+      log(`Opening your browser to sign in to Trek…`);
+      const opened = openBrowser(authUrl);
+      if (!opened) {
+        log(`Could not open a browser automatically. Open this URL to continue:`);
+        log(`  ${c.cyan(authUrl)}`);
+      } else {
+        log(c.dim(`  If it doesn't open, visit: ${authUrl}`));
+      }
+      log(`Waiting for you to authorize in the browser… ${c.dim('(Ctrl+C to cancel)')}`);
+
+      timer = setTimeout(() => {
+        warn('timed out waiting for browser login.');
+        finish(null);
+      }, LOGIN_TIMEOUT_MS);
+    });
+  });
+}
+
+// Manual paste fallback (also used for --no-browser and non-TTY).
+async function pasteToken() {
   log();
   log(`Trek needs an API token (${c.cyan('trk_...')}).`);
   log(`Mint one in the cockpit: ${c.cyan(COCKPIT_SETTINGS_URL)} (Settings → API tokens).`);
@@ -97,6 +244,26 @@ async function resolveToken(flags) {
   const tok = await prompt('Paste your Trek token (or press Enter to skip): ');
   if (!tok) { warn('No token entered — writing config with a placeholder. Set TREK_TOKEN later.'); return 'trk_REPLACE_ME'; }
   return tok;
+}
+
+async function resolveToken(flags) {
+  // 1. explicit flag
+  if (typeof flags.token === 'string' && flags.token) return flags.token;
+  // 2. environment
+  if (process.env.TREK_TOKEN) { skip('using TREK_TOKEN from environment'); return process.env.TREK_TOKEN; }
+  // 3. reuse an existing token from settings (unless --login forces re-auth)
+  if (!flags.login) {
+    const existing = detectExistingToken();
+    if (existing) { skip(`reusing TREK_TOKEN from ${rel(existing.path)}`); return existing.token; }
+  }
+  // 4. browser login (interactive, unless --no-browser)
+  if (process.stdin.isTTY && !flags['no-browser']) {
+    const tok = await browserLogin(flags);
+    if (looksLikeToken(tok)) { ok('signed in via browser'); return tok; }
+    warn('falling back to manual token entry.');
+  }
+  // 5. manual paste fallback (also the --no-browser / non-TTY path)
+  return pasteToken();
 }
 
 // --- settings.local.json: merge env block ----------------------------------
@@ -211,20 +378,26 @@ ${c.bold('Usage')}
 ${c.bold('Options')}
   --project              Project scope: write ./.claude/settings.local.json (default)
   --user                 User scope: write ~/.claude/settings.local.json
-  --token <trk_...>      Trek API token (else $TREK_TOKEN, else prompt)
+  --token <trk_...>      Trek API token (skips browser login)
   --api-url <url>        Trek API base URL (default ${DEFAULT_API_URL})
+  --cockpit-url <url>    Cockpit base URL for browser login (default ${DEFAULT_COCKPIT_URL})
   --project-id <uuid>    Bind a default Trek project (sets TREK_PROJECT_ID)
   --marketplace <o/r>    GitHub owner/repo of the plugin marketplace (else $TREK_MARKETPLACE)
+  --login                Force a fresh browser login (ignore any saved token)
+  --no-browser           Skip browser login; paste a token manually
   --uninstall            Remove the plugin + Trek env for the chosen scope
   -h, --help             Show this help
 
 ${c.bold('What init does')}
   1. claude plugin marketplace add trekagent/trek-claude-plugin
   2. claude plugin install ${PLUGIN}@${MARKETPLACE}
-  3. writes TREK_TOKEN / TREK_API_URL into .claude/settings.local.json (gitignored)
+  3. resolves a token (flag → env → saved → browser login → manual paste)
+  4. writes TREK_TOKEN / TREK_API_URL into .claude/settings.local.json (gitignored)
 
-The plugin ships the skill, presence hooks, and the remote MCP server; the token in
-settings.local.json is what makes them authenticate. Re-running is safe.
+By default, if no token is already available init opens your browser to sign in /
+create an account; the token is created and delivered back automatically over a
+localhost listener. The plugin ships the skill, presence hooks, and the remote MCP
+server; the token in settings.local.json is what makes them authenticate. Re-running is safe.
 `;
 
 async function main() {

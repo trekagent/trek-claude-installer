@@ -5,6 +5,10 @@ plugin** (skill + presence hooks + remote MCP server) from the Trek marketplace 
 API token — so an agent starts reporting presence and working the ready-task frontier the moment
 you restart Claude Code.
 
+If no token is already available, `init` **opens your browser** so you can sign in or create an
+account — the token is then created and delivered straight back to the installer over a localhost
+loopback listener. No copy-paste required.
+
 ## Usage
 
 ```bash
@@ -24,14 +28,28 @@ npx @trekagent/claude init --uninstall
 | --- | --- | --- |
 | `--project` | (default) | Project scope — write `./.claude/settings.local.json`. |
 | `--user` | | User scope — write `~/.claude/settings.local.json`. |
-| `--token <trk_...>` | `$TREK_TOKEN`, else prompt | Trek API token. |
+| `--token <trk_...>` | browser login | Trek API token (skips the browser flow). |
 | `--api-url <url>` | `https://api.trekagent.io` | Trek API base URL. |
+| `--cockpit-url <url>` | `https://console.trekagent.io` | Cockpit base URL used for browser login. |
 | `--project-id <uuid>` | `$TREK_PROJECT_ID` | Bind a default Trek project. |
 | `--marketplace <owner>/<repo>` | `trekagent/trek-claude-plugin` or `$TREK_MARKETPLACE` | GitHub repo hosting the plugin marketplace. |
+| `--login` | | Force a fresh browser login, ignoring any saved token. |
+| `--no-browser` | | Skip the browser flow and paste a token manually. |
 | `--uninstall` | | Remove the plugin + Trek env for the chosen scope. |
 
-If no token is provided via flag or env, `init` prompts for one (TTY) and points you at the
-cockpit **Settings → API tokens** page to mint one.
+### How the token is resolved
+
+`init` finds a token in this order:
+
+1. `--token <trk_...>` flag.
+2. `$TREK_TOKEN` environment variable.
+3. A `trk_` token already wired into project `./.claude/settings.local.json` or user
+   `~/.claude/settings.local.json` (skipped when `--login` is passed).
+4. **Browser login** (interactive terminals, unless `--no-browser`): opens the cockpit
+   `cli-auth` page, you sign in / sign up, and the token is delivered back automatically over a
+   loopback listener bound to `127.0.0.1`.
+5. Manual paste prompt — the fallback for `--no-browser`, non-interactive shells, or if the
+   browser flow times out (3 min). Points you at **Settings → API tokens** in the cockpit.
 
 ## What `init` does
 
