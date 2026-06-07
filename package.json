@@ -1,6 +1,6 @@
 {
   "name": "@trekagent/claude",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "One-command installer for Trek: installs the Trek Claude Code plugin (skill + hooks + MCP) from the Trek marketplace and wires your API token.",
   "private": false,
   "type": "module",
