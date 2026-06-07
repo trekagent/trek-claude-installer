@@ -1,0 +1,29 @@
+{
+  "name": "@trek/claude",
+  "version": "0.1.0",
+  "description": "One-command installer for Trek: installs the Trek Claude Code plugin (skill + hooks + MCP) from the Trek marketplace and wires your API token.",
+  "private": false,
+  "type": "module",
+  "bin": {
+    "trek-claude": "bin/cli.mjs"
+  },
+  "files": [
+    "bin",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "init": "node bin/cli.mjs init"
+  },
+  "keywords": [
+    "trek",
+    "claude",
+    "claude-code",
+    "plugin",
+    "mcp",
+    "agent"
+  ],
+  "license": "MIT"
+}
