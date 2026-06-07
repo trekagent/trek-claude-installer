@@ -6,8 +6,9 @@ API token — so an agent starts reporting presence and working the ready-task f
 you restart Claude Code.
 
 If no token is already available, `init` **opens your browser** so you can sign in or create an
-account — the token is then created and delivered straight back to the installer over a localhost
-loopback listener. No copy-paste required.
+account and **pick a project** — the token (and the selected project) are then delivered straight
+back to the installer over a localhost loopback listener and written as `TREK_TOKEN` /
+`TREK_PROJECT_ID`. No copy-paste required.
 
 ## Usage
 
@@ -46,8 +47,10 @@ npx @trekagent/claude init --uninstall
 3. A `trk_` token already wired into project `./.claude/settings.local.json` or user
    `~/.claude/settings.local.json` (skipped when `--login` is passed).
 4. **Browser login** (interactive terminals, unless `--no-browser`): opens the cockpit
-   `cli-auth` page, you sign in / sign up, and the token is delivered back automatically over a
-   loopback listener bound to `127.0.0.1`.
+   `cli-auth` page, you sign in / sign up and select a project, and the token plus the chosen
+   project are delivered back automatically over a loopback listener bound to `127.0.0.1`. The
+   selected project is written as `TREK_PROJECT_ID` (an explicit `--project-id` still applies to
+   the non-browser paths).
 5. Manual paste prompt — the fallback for `--no-browser`, non-interactive shells, or if the
    browser flow times out (3 min). Points you at **Settings → API tokens** in the cockpit.
 

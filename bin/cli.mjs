@@ -146,8 +146,12 @@ display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
 .card{text-align:center;max-width:30rem;padding:2rem}h1{font-size:1.4rem}p{color:#f28b82}</style></head>
 <body><div class="card"><h1>Trek CLI</h1><p>${String(msg).replace(/[<>&]/g, '')}</p></div></body></html>`;
 
-// Loopback browser-login flow. Resolves with a trk_ token, or null if it could
-// not complete (timeout / browser failure / user error) so the caller can fall back.
+// Loopback browser-login flow. Resolves with { token, projectId } on success, or
+// null if it could not complete (timeout / browser failure / user error) so the
+// caller can fall back. The cockpit success callback contract is:
+//   success: http://127.0.0.1:<port>/callback?token=<trk_...>&project=<projectId>&state=<nonce>
+//   error:   http://127.0.0.1:<port>/callback?error=<msg>&state=<nonce>
+// Project selection is mandatory in the cockpit, so `project` is normally present.
 function browserLogin(flags) {
   return new Promise((resolve) => {
     const expectedState = randomUUID();
@@ -176,6 +180,7 @@ function browserLogin(flags) {
       const token = url.searchParams.get('token');
       const state = url.searchParams.get('state');
       const error = url.searchParams.get('error');
+      const projectId = url.searchParams.get('project') || '';
 
       // A mismatched state must NOT resolve — keep waiting.
       if (state !== expectedState) {
@@ -195,7 +200,7 @@ function browserLogin(flags) {
       if (looksLikeToken(token)) {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
         res.end(SUCCESS_HTML);
-        finish(token);
+        finish({ token, projectId });
         return;
       }
 
@@ -246,24 +251,28 @@ async function pasteToken() {
   return tok;
 }
 
+// Resolve a token (and, where available, a project id) following this precedence.
+// Always returns { token, projectId }; projectId is '' for every path except a
+// successful browser login, where the cockpit's mandatory project selection is
+// delivered back over the loopback callback.
 async function resolveToken(flags) {
   // 1. explicit flag
-  if (typeof flags.token === 'string' && flags.token) return flags.token;
+  if (typeof flags.token === 'string' && flags.token) return { token: flags.token, projectId: '' };
   // 2. environment
-  if (process.env.TREK_TOKEN) { skip('using TREK_TOKEN from environment'); return process.env.TREK_TOKEN; }
+  if (process.env.TREK_TOKEN) { skip('using TREK_TOKEN from environment'); return { token: process.env.TREK_TOKEN, projectId: '' }; }
   // 3. reuse an existing token from settings (unless --login forces re-auth)
   if (!flags.login) {
     const existing = detectExistingToken();
-    if (existing) { skip(`reusing TREK_TOKEN from ${rel(existing.path)}`); return existing.token; }
+    if (existing) { skip(`reusing TREK_TOKEN from ${rel(existing.path)}`); return { token: existing.token, projectId: '' }; }
   }
   // 4. browser login (interactive, unless --no-browser)
   if (process.stdin.isTTY && !flags['no-browser']) {
-    const tok = await browserLogin(flags);
-    if (looksLikeToken(tok)) { ok('signed in via browser'); return tok; }
+    const result = await browserLogin(flags);
+    if (result && looksLikeToken(result.token)) { ok('signed in via browser'); return { token: result.token, projectId: result.projectId || '' }; }
     warn('falling back to manual token entry.');
   }
   // 5. manual paste fallback (also the --no-browser / non-TTY path)
-  return pasteToken();
+  return { token: await pasteToken(), projectId: '' };
 }
 
 // --- settings.local.json: merge env block ----------------------------------
@@ -316,7 +325,7 @@ function installPlugin(bin, marketplaceRepo) {
 async function init(flags) {
   const userScope = !!flags.user;
   const apiUrl = (typeof flags['api-url'] === 'string' && flags['api-url']) || DEFAULT_API_URL;
-  const projectId = typeof flags['project-id'] === 'string' ? flags['project-id'] : process.env.TREK_PROJECT_ID || '';
+  const flagProjectId = typeof flags['project-id'] === 'string' ? flags['project-id'] : process.env.TREK_PROJECT_ID || '';
   const marketplaceRepo = (typeof flags.marketplace === 'string' && flags.marketplace) || DEFAULT_MARKETPLACE_REPO;
 
   log(c.bold(`\nTrek installer — ${userScope ? 'user' : 'project'} scope`));
@@ -332,7 +341,10 @@ async function init(flags) {
     installPlugin(bin, marketplaceRepo);
   }
 
-  const token = await resolveToken(flags);
+  const { token, projectId: browserProjectId } = await resolveToken(flags);
+  // The browser flow's mandatory project selection wins; otherwise fall back to
+  // the explicit --project-id / $TREK_PROJECT_ID resolution.
+  const projectId = browserProjectId || flagProjectId;
   const claudeDir = userScope ? join(homedir(), '.claude') : join(CWD, '.claude');
   writeTokenEnv(claudeDir, apiUrl, token, projectId);
   if (!userScope) ensureGitignore(CWD, ['.claude/settings.local.json']);
